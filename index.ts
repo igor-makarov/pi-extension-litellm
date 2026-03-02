@@ -17,6 +17,15 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 const DEFAULT_BASE_URL = "http://localhost:4000/v1";
 const PROVIDERS = ["anthropic", "openai", "google"] as const;
 
+/**
+ * Canonical slug for fuzzy ID matching across naming conventions:
+ *   1. strip "provider." prefix  (e.g. "qwen."    from "qwen.qwen3-coder-480b-a35b-v1:0")
+ *   2. strip "-vN…" version suffix (e.g. "-v1:0" from "qwen3-coder-480b-a35b-v1:0")
+ *   3. collapse all separators → lowercase  ("qwen-3" === "qwen3")
+ */
+const slugify = (id: string) =>
+	id.replace(/^[^.]+\./, "").replace(/-v\d.*$/i, "").replace(/[-._: /]/g, "").toLowerCase();
+
 export default async function (pi: ExtensionAPI) {
 	const baseUrl = process.env.LITELLM_BASE_URL || DEFAULT_BASE_URL;
 	const apiKey = process.env.LITELLM_API_KEY;
@@ -36,21 +45,50 @@ export default async function (pi: ExtensionAPI) {
 		return;
 	}
 
-	// Match against built-in model metadata
+	// Exact-match against anthropic / openai / google
+	const exactMatched = new Set<string>();
 	const models = PROVIDERS.flatMap((provider) =>
 		getModels(provider)
 			.filter((model) => availableIds.has(model.id))
-			.map((model) => ({
-				id: model.id,
-				name: model.name,
-				api: model.api,
-				reasoning: model.reasoning,
-				input: [...model.input] as ("text" | "image")[],
-				cost: { ...model.cost },
-				contextWindow: model.contextWindow,
-				maxTokens: model.maxTokens,
-			})),
+			.map((model) => {
+				exactMatched.add(model.id);
+				return {
+					id: model.id,
+					name: model.name,
+					api: model.api,
+					reasoning: model.reasoning,
+					input: [...model.input] as ("text" | "image")[],
+					cost: { ...model.cost },
+					contextWindow: model.contextWindow,
+					maxTokens: model.maxTokens,
+				};
+			}),
 	);
+
+	// Fuzzy-match remaining LiteLLM IDs against amazon-bedrock metadata.
+	// Slug normalisation handles prefix aliases ("qwen." → "") and version
+	// suffixes ("-v1:0" → "") so that e.g.:
+	//   LiteLLM "qwen-3-coder-480b-a35b"  ↔  pi "qwen.qwen3-coder-480b-a35b-v1:0"
+	//   LiteLLM "minimax-m2"              ↔  pi "minimax.minimax-m2"
+	const slugMap = new Map<string, ReturnType<typeof getModels>[0]>();
+	for (const model of getModels("amazon-bedrock")) {
+		slugMap.set(slugify(model.id), model);
+	}
+	for (const litellmId of availableIds) {
+		if (exactMatched.has(litellmId)) continue;
+		const piModel = slugMap.get(slugify(litellmId));
+		if (!piModel) continue;
+		models.push({
+			id: litellmId,
+			name: piModel.name,
+			api: piModel.api === "bedrock-converse-stream" ? "openai-completions" : piModel.api,
+			reasoning: piModel.reasoning,
+			input: [...piModel.input] as ("text" | "image")[],
+			cost: { ...piModel.cost },
+			contextWindow: piModel.contextWindow,
+			maxTokens: piModel.maxTokens,
+		});
+	}
 
 	if (models.length === 0) {
 		console.error("LiteLLM: no models matched built-in metadata. Available:", [...availableIds].join(", "));
