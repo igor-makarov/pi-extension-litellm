@@ -95,6 +95,10 @@ export default async function (pi: ExtensionAPI) {
 		return;
 	}
 
+	for (const model of models) {
+		console.log(`LiteLLM model ${model.id} api: ${model.api}`);
+	}
+
 	pi.registerProvider("litellm", {
 		baseUrl,
 		apiKey: "LITELLM_API_KEY",
