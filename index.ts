@@ -15,7 +15,7 @@ import { getModels } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const DEFAULT_BASE_URL = "http://localhost:4000/v1";
-const PROVIDERS = ["anthropic", "openai", "google"] as const;
+const PROVIDERS = ["anthropic", "openai", "google", "opencode"] as const;
 
 /**
  * Canonical slug for fuzzy ID matching across naming conventions:
@@ -45,11 +45,11 @@ export default async function (pi: ExtensionAPI) {
 		return;
 	}
 
-	// Exact-match against anthropic / openai / google
+	// Exact-match against anthropic / openai / google / opencode
 	const exactMatched = new Set<string>();
 	const models = PROVIDERS.flatMap((provider) =>
 		getModels(provider)
-			.filter((model) => availableIds.has(model.id))
+			.filter((model) => availableIds.has(model.id) && !exactMatched.has(model.id))
 			.map((model) => {
 				exactMatched.add(model.id);
 				return {
@@ -61,6 +61,7 @@ export default async function (pi: ExtensionAPI) {
 					cost: { ...model.cost },
 					contextWindow: model.contextWindow,
 					maxTokens: model.maxTokens,
+					_source: provider,
 				};
 			}),
 	);
@@ -87,6 +88,7 @@ export default async function (pi: ExtensionAPI) {
 			cost: { ...piModel.cost },
 			contextWindow: piModel.contextWindow,
 			maxTokens: piModel.maxTokens,
+			_source: `bedrock-fuzzy(${piModel.id})`,
 		});
 	}
 
@@ -96,7 +98,7 @@ export default async function (pi: ExtensionAPI) {
 	}
 
 	for (const model of models) {
-		console.log(`LiteLLM model ${model.id} api: ${model.api}`);
+		console.log(`LiteLLM model ${model.id} api: ${model.api} (${model._source}, reasoning=${model.reasoning})`);
 	}
 
 	pi.registerProvider("litellm", {
