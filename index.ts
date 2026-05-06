@@ -45,24 +45,16 @@ export default async function (pi: ExtensionAPI) {
 		return;
 	}
 
-	// Exact-match against anthropic / openai / google / opencode
+	// Exact-match against anthropic / openai / google / opencode.
+	// Strip `provider` and `baseUrl` — pi.registerProvider re-sets provider to
+	// "litellm" and per-model baseUrl would override the LiteLLM proxy URL.
 	const exactMatched = new Set<string>();
 	const models = PROVIDERS.flatMap((provider) =>
 		getModels(provider)
 			.filter((model) => availableIds.has(model.id) && !exactMatched.has(model.id))
-			.map((model) => {
-				exactMatched.add(model.id);
-				return {
-					id: model.id,
-					name: model.name,
-					api: model.api,
-					reasoning: model.reasoning,
-					input: [...model.input] as ("text" | "image")[],
-					cost: { ...model.cost },
-					contextWindow: model.contextWindow,
-					maxTokens: model.maxTokens,
-					_source: provider,
-				};
+			.map(({ provider: _p, baseUrl: _b, ...rest }) => {
+				exactMatched.add(rest.id);
+				return { ...rest, _source: provider };
 			}),
 	);
 
@@ -79,15 +71,11 @@ export default async function (pi: ExtensionAPI) {
 		if (exactMatched.has(litellmId)) continue;
 		const piModel = slugMap.get(slugify(litellmId));
 		if (!piModel) continue;
+		const { provider: _p, baseUrl: _b, ...rest } = piModel;
 		models.push({
+			...rest,
 			id: litellmId,
-			name: piModel.name,
-			api: piModel.api === "bedrock-converse-stream" ? "openai-completions" : piModel.api,
-			reasoning: piModel.reasoning,
-			input: [...piModel.input] as ("text" | "image")[],
-			cost: { ...piModel.cost },
-			contextWindow: piModel.contextWindow,
-			maxTokens: piModel.maxTokens,
+			api: rest.api === "bedrock-converse-stream" ? "openai-completions" : rest.api,
 			_source: `bedrock-fuzzy(${piModel.id})`,
 		});
 	}
