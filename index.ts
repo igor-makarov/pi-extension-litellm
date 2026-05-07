@@ -15,7 +15,7 @@
 
 import { getModels } from "@mariozechner/pi-ai";
 import type { Api, Model } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
 const DEFAULT_BASE_URL = "http://localhost:4000/v1";
 const PROVIDERS = ["anthropic", "openai", "google", "opencode"] as const;
@@ -36,6 +36,8 @@ const slugify = (id: string) =>
 
 const formatModelDebug = (model: LiteLLMModelDebug) =>
 	`LiteLLM model ${model.id} api: ${model.api} (${model._source}, reasoning=${model.reasoning})`;
+
+const formatSpend = (spend: number) => Math.round(spend).toLocaleString();
 
 const fetchAvailableIds = async (baseUrl: string, apiKey?: string): Promise<string[]> => {
 	const headers: Record<string, string> = {};
@@ -93,6 +95,27 @@ export default async function (pi: ExtensionAPI) {
 		availableIds: [] as string[],
 		models: [] as LiteLLMModelDebug[],
 		error: undefined as string | undefined,
+		keySpend: undefined as number | undefined,
+	};
+
+	const updateStatus = (ctx: ExtensionContext) => {
+		if (state.error) {
+			ctx.ui.setStatus("litellm", ctx.ui.theme.fg("error", `${LABEL}: error`));
+			return;
+		}
+		if (state.models.length === 0) {
+			ctx.ui.setStatus("litellm", ctx.ui.theme.fg("error", `${LABEL}: 0 models`));
+			return;
+		}
+		const summary = `${LABEL}: ${state.models.length}/${state.availableIds.length} models`;
+		if (state.keySpend === undefined) {
+			ctx.ui.setStatus("litellm", ctx.ui.theme.fg("accent", summary));
+			return;
+		}
+		ctx.ui.setStatus(
+			"litellm",
+			ctx.ui.theme.fg("accent", `${summary} · Key Spend: $${formatSpend(state.keySpend)}`),
+		);
 	};
 
 	pi.registerCommand("litellm", {
@@ -122,6 +145,16 @@ export default async function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.on("after_provider_response", (event, ctx) => {
+		if (ctx.model?.provider !== "litellm") return;
+		const value = event.headers["x-litellm-key-spend"];
+		if (value !== undefined) {
+			const spend = Number(value);
+			if (Number.isFinite(spend)) state.keySpend = spend;
+		}
+		updateStatus(ctx);
+	});
+
 	pi.on("session_start", (_event, ctx) => {
 		// Fire-and-forget: pi awaits session_start handlers, then synchronously
 		// runs showLoadedResources / showStartupNoticesIfNeeded /
@@ -134,18 +167,15 @@ export default async function (pi: ExtensionAPI) {
 		setTimeout(() => {
 			if (state.error) {
 				ctx.ui.notify(state.error, "error");
-				ctx.ui.setStatus("litellm", ctx.ui.theme.fg("error", `${LABEL}: error`));
+				updateStatus(ctx);
 				return;
 			}
 			if (state.models.length === 0) {
-				ctx.ui.setStatus("litellm", ctx.ui.theme.fg("error", `${LABEL}: 0 models`));
+				updateStatus(ctx);
 				return;
 			}
 			ctx.ui.notify(`LiteLLM: ${state.models.map((model) => model.id).join(", ")}`, "info");
-			ctx.ui.setStatus(
-				"litellm",
-				ctx.ui.theme.fg("accent", `${LABEL}: ${state.models.length}/${state.availableIds.length} models`),
-			);
+			updateStatus(ctx);
 		}, 0);
 	});
 
