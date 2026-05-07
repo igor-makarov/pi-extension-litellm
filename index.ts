@@ -107,15 +107,11 @@ export default async function (pi: ExtensionAPI) {
 			ctx.ui.setStatus("litellm", ctx.ui.theme.fg("error", `${LABEL}: 0 models`));
 			return;
 		}
-		const summary = `${LABEL}: ${state.models.length}/${state.availableIds.length} models`;
-		if (state.keySpend === undefined) {
-			ctx.ui.setStatus("litellm", ctx.ui.theme.fg("accent", summary));
-			return;
+		let summary = `${LABEL}: ${state.models.length}/${state.availableIds.length} models`;
+		if (state.keySpend !== undefined) {
+			summary += `, $${formatSpend(state.keySpend)} key spend`;
 		}
-		ctx.ui.setStatus(
-			"litellm",
-			ctx.ui.theme.fg("accent", `${summary} · Key Spend: $${formatSpend(state.keySpend)}`),
-		);
+		ctx.ui.setStatus("litellm", ctx.ui.theme.fg("accent", summary));
 	};
 
 	pi.registerCommand("litellm", {
